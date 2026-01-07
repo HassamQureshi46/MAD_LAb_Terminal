@@ -1,0 +1,369 @@
+import React, { useState, useEffect } from 'react';
+import { Text, View, StyleSheet, FlatList, ActivityIndicator, Animated } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import * as Location from 'expo-location';
+import { getAddressFromCoordinates, getPrayerTimings } from '../utils/Api';
+
+export default function PrayersTimming() {
+    const [prayerTimingsResponse, setPrayerTimingsResponse] = useState(null);
+    const [errorMsg, setErrorMsg] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [fadeAnim] = useState(new Animated.Value(0));
+
+    const currentDate = new Date().toISOString().split('T')[0];
+
+    useEffect(() => {
+        (async () => {
+            try {
+                let locationCoords = { latitude: 33.7685, longitude: 72.3606 };
+
+                let { status } = await Location.requestForegroundPermissionsAsync();
+                if (status === 'granted') {
+                    try {
+                        let currentLocation = await Location.getCurrentPositionAsync({});
+                        locationCoords = currentLocation.coords;
+                    } catch (locError) {
+                        console.warn('Unable to get current location, using default coordinates.');
+                    }
+                }
+
+                const address = await getAddressFromCoordinates(
+                    locationCoords.latitude,
+                    locationCoords.longitude
+                );
+                const apiResp = await getPrayerTimings(address, currentDate);
+
+                setPrayerTimingsResponse({ apiResp, address });
+                
+                Animated.timing(fadeAnim, {
+                    toValue: 1,
+                    duration: 800,
+                    useNativeDriver: true,
+                }).start();
+            } catch (error) {
+                setErrorMsg('Unable to fetch prayer timings. Please try again.');
+                console.error(error);
+            } finally {
+                setLoading(false);
+            }
+        })();
+    }, []);
+
+    const getPrayerEmoji = (name) => {
+        const emojis = {
+            Fajr: '🌅',
+            Sunrise: '🌄',
+            Dhuhr: '☀️',
+            Asr: '🌤️',
+            Sunset: '🌇',
+            Maghrib: '🌆',
+            Isha: '🌙',
+            Imsak: '🌃',
+            Midnight: '🌌',
+        };
+        return emojis[name] || '🕌';
+    };
+
+    const getCurrentPrayer = () => {
+        if (!prayerTimingsResponse) return null;
+        const now = new Date();
+        const currentTime = now.getHours() * 60 + now.getMinutes();
+        
+        const timings = getPrayerTimingsList();
+        const mainPrayers = ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'];
+        
+        for (let prayer of timings) {
+            if (mainPrayers.includes(prayer.name)) {
+                const [hours, minutes] = prayer.time.split(':');
+                const prayerTime = parseInt(hours) * 60 + parseInt(minutes);
+                
+                if (currentTime < prayerTime) {
+                    return prayer.name;
+                }
+            }
+        }
+        return 'Isha';
+    };
+
+    const getPrayerTimingsList = () => {
+        if (!prayerTimingsResponse || !prayerTimingsResponse.apiResp) return [];
+        const timings = prayerTimingsResponse.apiResp.data.timings;
+        return Object.keys(timings).map((key) => ({ name: key, time: timings[key] }));
+    };
+
+    const nextPrayer = getCurrentPrayer();
+
+    const renderPrayerItem = ({ item, index }) => {
+        const isNext = item.name === nextPrayer;
+        const mainPrayers = ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'];
+        const isMainPrayer = mainPrayers.includes(item.name);
+
+        return (
+            <Animated.View
+                style={[
+                    styles.prayerItemWrapper,
+                    { opacity: fadeAnim },
+                ]}
+            >
+                <LinearGradient
+                    colors={
+                        isNext
+                            ? ['rgba(251, 191, 36, 0.2)', 'rgba(245, 158, 11, 0.1)']
+                            : isMainPrayer
+                            ? ['rgba(56, 189, 248, 0.15)', 'rgba(99, 102, 241, 0.1)']
+                            : ['rgba(51, 65, 85, 0.3)', 'rgba(30, 41, 59, 0.2)']
+                    }
+                    style={[
+                        styles.prayerItem,
+                        isNext && styles.prayerItemNext,
+                    ]}
+                >
+                    <View style={styles.prayerLeft}>
+                        <View style={[
+                            styles.emojiContainer,
+                            isNext && styles.emojiContainerNext,
+                        ]}>
+                            <Text style={styles.prayerEmoji}>{getPrayerEmoji(item.name)}</Text>
+                        </View>
+                        <View>
+                            <Text style={[
+                                styles.prayerName,
+                                isNext && styles.prayerNameNext,
+                            ]}>
+                                {item.name}
+                            </Text>
+                            {isNext && (
+                                <View style={styles.nextBadge}>
+                                    <Text style={styles.nextBadgeText}>Next Prayer</Text>
+                                </View>
+                            )}
+                        </View>
+                    </View>
+                    <Text style={[
+                        styles.prayerTime,
+                        isNext && styles.prayerTimeNext,
+                    ]}>
+                        {item.time}
+                    </Text>
+                </LinearGradient>
+            </Animated.View>
+        );
+    };
+
+    return (
+        <LinearGradient colors={['#0a0e27', '#1a1f3a', '#0a0e27']} style={styles.container}>
+            {/* Header */}
+            <View style={styles.header}>
+                <View style={styles.decorativeTop}>
+                    <View style={styles.decorativeDot} />
+                    <View style={styles.decorativeLine} />
+                    <View style={styles.decorativeDot} />
+                </View>
+                <Text style={styles.headerTitle}>Prayer Times</Text>
+                <Text style={styles.dateText}>{currentDate}</Text>
+                
+                {prayerTimingsResponse && (
+                    <View style={styles.locationCard}>
+                        <Text style={styles.locationIcon}>📍</Text>
+                        <Text style={styles.locationText}>{prayerTimingsResponse.address}</Text>
+                    </View>
+                )}
+            </View>
+
+            {/* Content */}
+            {loading && (
+                <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="large" color="#38bdf8" />
+                    <Text style={styles.loadingText}>Fetching prayer times...</Text>
+                    <Text style={styles.loadingSubtext}>Please wait a moment</Text>
+                </View>
+            )}
+
+            {!loading && errorMsg && (
+                <View style={styles.errorContainer}>
+                    <Text style={styles.errorEmoji}>⚠️</Text>
+                    <Text style={styles.errorText}>{errorMsg}</Text>
+                </View>
+            )}
+
+            {!loading && prayerTimingsResponse && (
+                <FlatList
+                    data={getPrayerTimingsList()}
+                    keyExtractor={(item) => item.name}
+                    renderItem={renderPrayerItem}
+                    contentContainerStyle={styles.listContent}
+                    showsVerticalScrollIndicator={false}
+                />
+            )}
+        </LinearGradient>
+    );
+}
+
+const styles = StyleSheet.create({
+    container: {
+        flex: 1,
+    },
+    header: {
+        paddingTop: 50,
+        paddingHorizontal: 20,
+        paddingBottom: 20,
+        alignItems: 'center',
+    },
+    decorativeTop: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        marginBottom: 12,
+    },
+    decorativeLine: {
+        width: 40,
+        height: 2,
+        backgroundColor: '#38bdf8',
+        borderRadius: 1,
+    },
+    decorativeDot: {
+        width: 6,
+        height: 6,
+        borderRadius: 3,
+        backgroundColor: '#38bdf8',
+    },
+    headerTitle: {
+        fontSize: 34,
+        fontWeight: '800',
+        color: '#f1f5f9',
+        letterSpacing: 0.5,
+        marginBottom: 6,
+    },
+    dateText: {
+        fontSize: 16,
+        color: '#94a3b8',
+        fontWeight: '600',
+        marginBottom: 16,
+    },
+    locationCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(15, 23, 42, 0.6)',
+        paddingHorizontal: 16,
+        paddingVertical: 10,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: 'rgba(56, 189, 248, 0.2)',
+        gap: 8,
+        maxWidth: '100%',
+    },
+    locationIcon: {
+        fontSize: 16,
+    },
+    locationText: {
+        fontSize: 13,
+        color: '#e2e8f0',
+        fontWeight: '500',
+        flex: 1,
+    },
+    listContent: {
+        paddingHorizontal: 20,
+        paddingBottom: 30,
+    },
+    prayerItemWrapper: {
+        marginBottom: 12,
+    },
+    prayerItem: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: 18,
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: 'rgba(56, 189, 248, 0.15)',
+    },
+    prayerItemNext: {
+        borderColor: 'rgba(251, 191, 36, 0.4)',
+        borderWidth: 2,
+    },
+    prayerLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 14,
+        flex: 1,
+    },
+    emojiContainer: {
+        width: 50,
+        height: 50,
+        borderRadius: 12,
+        backgroundColor: 'rgba(56, 189, 248, 0.15)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    emojiContainerNext: {
+        backgroundColor: 'rgba(251, 191, 36, 0.2)',
+    },
+    prayerEmoji: {
+        fontSize: 24,
+    },
+    prayerName: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: '#e2e8f0',
+    },
+    prayerNameNext: {
+        color: '#fbbf24',
+    },
+    nextBadge: {
+        marginTop: 4,
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        backgroundColor: 'rgba(251, 191, 36, 0.2)',
+        borderRadius: 6,
+        alignSelf: 'flex-start',
+    },
+    nextBadgeText: {
+        fontSize: 10,
+        color: '#fbbf24',
+        fontWeight: '700',
+        letterSpacing: 0.5,
+    },
+    prayerTime: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: '#38bdf8',
+        letterSpacing: 0.5,
+    },
+    prayerTimeNext: {
+        color: '#fbbf24',
+        fontSize: 20,
+    },
+    loadingContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        gap: 12,
+    },
+    loadingText: {
+        fontSize: 18,
+        color: '#38bdf8',
+        fontWeight: '700',
+        marginTop: 8,
+    },
+    loadingSubtext: {
+        fontSize: 14,
+        color: '#94a3b8',
+    },
+    errorContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 40,
+    },
+    errorEmoji: {
+        fontSize: 64,
+        marginBottom: 16,
+    },
+    errorText: {
+        fontSize: 16,
+        color: '#f87171',
+        fontWeight: '600',
+        textAlign: 'center',
+        lineHeight: 24,
+    },
+});
